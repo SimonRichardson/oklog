@@ -50,6 +50,28 @@ form#query {
 	min-width: 64rem;
 }
 
+form#query button {
+	background: 0;
+	border: 0.1rem solid rgb(44, 62, 80);
+	cursor: pointer;
+	font-weight: 700;
+	margin-left: 2.4rem;
+	padding: 0.6rem 1rem;
+	text-transform: capitalize;
+	transition: all 0.15s ease;
+}
+
+form#query button:hover {
+	background: rgb(44, 62, 80);
+	color: rgb(250, 250, 250);
+}
+
+form#query div.plan {
+	color: rgb(127, 140, 141);
+	font-size: 1.4rem;
+	padding: 1.8rem 1.6rem 0.8rem 1.6rem;
+}
+
 form#query div.row {
 	align-items: center;
 	box-sizing: border-box;
@@ -78,8 +100,10 @@ form#query div.range {
 	padding: 1.2rem 1.6rem 1rem 1.6rem;
 }
 
-form#query div.regex {
-	margin: 0 1.2rem;
+form#query div.result-info {
+	font-size: 1.4rem;
+	min-height: 1.6rem;
+	padding: 1.8rem 1.6rem 0.8rem 1.6rem;
 }
 
 form#query input {
@@ -105,34 +129,25 @@ form#query input:-ms-input-placeholder { /* Internet Explorer 10-11 */
 	color: rgb(127, 140, 141);
 }
 
-form#query div.plan {
-	color: rgb(127, 140, 141);
-	font-size: 1.4rem;
-	padding: 1.8rem 1.6rem 0.8rem 1.6rem;
-}
-
-form#query div.result-info {
-	font-size: 1.4rem;
-	min-height: 1.6rem;
-	padding: 1.8rem 1.6rem 0.8rem 1.6rem;
+form#query input#regex {
+	margin-right: 0.6rem;
 }
 
 form#query select {
 	background: transparent;
 	border: 0.1rem solid transparent;
 	border-radius: 0;
+	box-sizing: content-box;
 	cursor: pointer;
 	font-weight: 700;
+	line-height: 1.6em;
+	margin: 0 0 0 1.6rem;
 	outline: 0;
-	padding: 0.8rem 0.4rem 0.8rem 1rem;
+	-webkit-appearance: none;
 }
 
 form#query select:focus {
-	border-color: rgb(127, 140, 141);
-}
-
-form#query select option {
-	direction: ltr;
+	padding: 0;
 }
 
 nav {

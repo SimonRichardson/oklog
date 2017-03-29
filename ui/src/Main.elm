@@ -445,23 +445,31 @@ viewResultInfo numRecords =
 
 formQuery : Model -> Html Msg
 formQuery model =
-    form [ id "query", onSubmit QueryFormSubmit ]
-        [ div [ class "row" ]
-            [ formElementQuery model.query.term
-            ]
-        , div [ class "row" ]
-            [ formElementRange model.query
-            , div [ class "regex" ]
-                [ input [ id "regex", onClick QueryToggleRegex, type_ "checkbox" ] []
-                , label [ for "regex" ] [ text "as regex" ]
+    let
+        action =
+            if model.query.to == "streaming" then
+                button [] [ text "stream" ]
+            else
+                button [] [ text "query" ]
+
+    in
+        form [ id "query", onSubmit QueryFormSubmit ]
+            [ div [ class "row" ]
+                [ formElementQuery model.query.term
                 ]
-            , button [] [ text "Go" ]
+            , div [ class "row" ]
+                [ formElementRange model.query
+                , div [ class "regex" ]
+                    [ input [ id "regex", onClick QueryToggleRegex, type_ "checkbox" ] []
+                    , label [ for "regex" ] [ text "regex" ]
+                    ]
+                , action
+                ]
+            , div [ class "row" ]
+                [ viewPlan model.isPlanned model.stats
+                , viewResultInfo (List.length model.records)
+                ]
             ]
-        , div [ class "row" ]
-            [ viewPlan model.isPlanned model.stats
-            , viewResultInfo (List.length model.records)
-            ]
-        ]
 
 
 formElementRange : Query -> Html Msg
