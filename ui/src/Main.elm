@@ -48,12 +48,11 @@ main =
 
 
 type alias Model =
-    { isPlanned : Bool
-    , lastPlan : Time
+    { lastPlan : Time
     , now : Time
     , query : Query
     , records : List Record
-    , stats : Stats
+    , stats : Maybe Stats
     }
 
 
@@ -81,7 +80,7 @@ type alias Stats =
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model False 0 0 initQuery [] initStats, Task.perform Tick Time.now )
+    ( Model 0 0 initQuery [] Nothing, Task.perform Tick Time.now )
 
 
 initQuery : Query
@@ -136,24 +135,24 @@ update msg model =
                 query =
                     model.query
             in
-                ( { model | isPlanned = False, query = { query | term = term } }, Cmd.none )
+                ( { model | query = { query | term = term }, stats = Nothing }, Cmd.none )
 
         QueryToUpdate to ->
             let
                 query =
                     model.query
             in
-                ( { model | isPlanned = False, query = { query | to = to } }, Cmd.none )
+                ( { model | query = { query | to = to }, stats = Nothing }, Cmd.none )
 
         QueryWindowUpdate window ->
             let
                 query =
                     model.query
             in
-                ( { model | isPlanned = False, query = { query | window = window } }, Cmd.none )
+                ( { model | query = { query | window = window }, stats = Nothing }, Cmd.none )
 
         StatsUpdate (Ok stats) ->
-            ( { model | isPlanned = True, stats = stats }, Cmd.none )
+            ( { model | stats = Just stats }, Cmd.none )
 
         StatsUpdate (Err _) ->
             ( model, Cmd.none )
@@ -184,7 +183,7 @@ update msg model =
                     model.query.term /= ""
 
                 shouldPlan =
-                    (not model.isPlanned) && timeHasPassed && termNotEmpty
+                    (not (isPlanned model)) && timeHasPassed && termNotEmpty
             in
                 case shouldPlan of
                     True ->
@@ -345,7 +344,7 @@ viewDebug : Model -> Html Msg
 viewDebug model =
     let
         slimModel =
-            { isPlanned = model.isPlanned
+            { isPlanned = isPlanned model
             , lastPlan = model.lastPlan
             , now = model.now
             , query = model.query
@@ -378,31 +377,31 @@ viewMatchList query line indexes elements =
                 viewMatchList query (String.dropLeft (index + queryLen) line) (List.drop 1 indexes) (elements ++ [ nonMatchElement, matchElement ])
 
 
-viewPlan : Bool -> Stats -> Html Msg
-viewPlan isPlanned stats =
-    let
-        nodeText =
-            case stats.nodesQueried of
-                1 ->
-                    "1 node"
+viewPlan : Maybe Stats -> Html Msg
+viewPlan stats =
+    case stats of
+        Nothing ->
+            div [ class "plan" ] [ text "Your query hasn't been planned yet." ]
 
-                _ ->
-                    (toString stats.nodesQueried) ++ " nodes"
+        Just stats ->
+            let
+                nodeText =
+                    case stats.nodesQueried of
+                        1 ->
+                            "1 node"
 
-        segmentsText =
-            case stats.segmentsQueried of
-                1 ->
-                    "1 segment"
+                        _ ->
+                            (toString stats.nodesQueried) ++ " nodes"
 
-                _ ->
-                    (toString stats.segmentsQueried) ++ " segments"
+                segmentsText =
+                    case stats.segmentsQueried of
+                        1 ->
+                            "1 segment"
 
-        elements =
-            case isPlanned of
-                False ->
-                    [ text "Your query hasn't been planned yet." ]
+                        _ ->
+                            (toString stats.segmentsQueried) ++ " segments"
 
-                True ->
+                elements =
                     [ span [] [ text "Your query could return " ]
                     , strong [] [ text (prettyPrintDataSet stats.maxDataSetSize) ]
                     , span [] [ text " reading " ]
@@ -410,8 +409,8 @@ viewPlan isPlanned stats =
                     , span [] [ text " on " ]
                     , strong [] [ text nodeText ]
                     ]
-    in
-        div [ class "plan" ] elements
+            in
+                div [ class "plan" ] elements
 
 
 viewRecord : String -> Int -> Record -> Html Msg
@@ -470,7 +469,7 @@ formQuery model =
                 , formElementAs
                 ]
             , div [ class "row" ]
-                [ viewPlan model.isPlanned model.stats
+                [ viewPlan model.stats
                 , viewResultInfo (List.length model.records)
                 ]
             ]
@@ -528,13 +527,13 @@ formElementQuery query =
 formElementWindow : Html Msg
 formElementWindow =
     select [ on "change" (Json.map QueryWindowUpdate targetValue) ]
-        [ option [ value "5m" ] [ text "5m" ]
-        , option [ value "15m" ] [ text "15m" ]
-        , option [ value "1h" ] [ text "1hr" ]
-        , option [ value "12h" ] [ text "12hrs" ]
-        , option [ value "1d" ] [ text "1day" ]
-        , option [ value "3d" ] [ text "3days" ]
-        , option [ value "7d" ] [ text "7days" ]
+        [ option [ value "5m" ] [ text "5 m" ]
+        , option [ value "15m" ] [ text "15 m" ]
+        , option [ value "1h" ] [ text "1 hr" ]
+        , option [ value "12h" ] [ text "12 hrs" ]
+        , option [ value "1d" ] [ text "1 day" ]
+        , option [ value "3d" ] [ text "3 days" ]
+        , option [ value "7d" ] [ text "7 days" ]
         ]
 
 
@@ -584,6 +583,15 @@ windowDuration window =
 
 -- HELPER
 
+
+isPlanned : Model -> Bool
+isPlanned model =
+    case model.stats of
+        Nothing ->
+            False
+
+        Just _ ->
+            True
 
 prettyPrintDataSet : Int -> String
 prettyPrintDataSet size =
