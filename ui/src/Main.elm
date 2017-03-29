@@ -223,13 +223,28 @@ queryUrl now query =
             Http.encodeUri (RFC3339.encode (fromTime now))
 
         parts =
-           [ "/store/query?from="
-           , from
-           , "&to="
-           , to
-           , "&q="
-           , query.term
-           ]
+            [ "/store/query?from="
+            , from
+            , "&to="
+            , to
+            , "&q="
+            , query.term
+            ]
+
+    in
+        if query.regex then
+            String.concat (parts ++ [ "&regex" ])
+        else
+           String.concat parts
+
+streamUrl : Query -> String
+streamUrl query =
+    let
+       parts =
+            [ "/store/stream?"
+            , "&q="
+            , query.term
+            ]
 
     in
         if query.regex then
@@ -240,7 +255,15 @@ queryUrl now query =
 
 getRecords : Time -> Query -> Cmd Msg
 getRecords now query =
-    streamRequest (queryUrl now query)
+    let
+        url =
+            if query.to == "streaming" then
+                streamUrl query
+            else
+                queryUrl now query
+
+    in
+        streamRequest url
 
 
 getStats : Time -> Query -> Cmd Msg
@@ -427,7 +450,7 @@ formQuery model =
             [ formElementQuery model.query.term
             ]
         , div [ class "row" ]
-            [ formElementRange
+            [ formElementRange model.query
             , div [ class "regex" ]
                 [ input [ id "regex", onClick QueryToggleRegex, type_ "checkbox" ] []
                 , label [ for "regex" ] [ text "as regex" ]
@@ -441,32 +464,42 @@ formQuery model =
         ]
 
 
-formElementRange : Html Msg
-formElementRange =
-    div [ class "range" ]
-        [ formElementWindow
-        , strong [] [ text "-" ]
-        , formElementTo
-        ]
+formElementRange : Query -> Html Msg
+formElementRange query =
+    let
+        bridge =
+            if query.to == "streaming" then
+                span [] [ text "and" ]
+            else
+                span [] [ text "to" ]
+
+    in
+        div [ class "range" ]
+            [ text "from"
+            , formElementWindow
+            , bridge
+            , formElementTo
+            ]
 
 
 formElementWindow : Html Msg
 formElementWindow =
     select [ on "change" (Json.map QueryWindowUpdate targetValue) ]
-        [ option [ value "5m" ] [ text "5m ago" ]
-        , option [ value "15m" ] [ text "15m ago" ]
-        , option [ value "1h" ] [ text "1 hour ago" ]
-        , option [ value "12h" ] [ text "12 hours ago" ]
-        , option [ value "1d" ] [ text "1 day ago" ]
-        , option [ value "3d" ] [ text "3 days ago" ]
-        , option [ value "7d" ] [ text "7 days ago" ]
+        [ option [ value "5m" ] [ text "5m" ]
+        , option [ value "15m" ] [ text "15m" ]
+        , option [ value "1h" ] [ text "1hr" ]
+        , option [ value "12h" ] [ text "12hrs" ]
+        , option [ value "1d" ] [ text "1day" ]
+        , option [ value "3d" ] [ text "3days" ]
+        , option [ value "7d" ] [ text "7days" ]
         ]
 
 
 formElementTo : Html Msg
 formElementTo =
     select [ on "change" (Json.map QueryToUpdate targetValue) ]
-        [ option [ value "0" ] [ text "now" ]
+        [ option [ value "streaming" ] [ text "streaming" ]
+        , option [ value "0" ] [ text "now" ]
         ]
 
 
@@ -494,7 +527,7 @@ day =
 
 defaultTo : String
 defaultTo =
-    "now"
+    "streaming"
 
 
 defaultWindow : String
