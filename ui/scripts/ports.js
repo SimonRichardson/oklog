@@ -25,6 +25,15 @@
 		});
 	};
 
+	app.ports.streamCancel.subscribe(function() {
+		if (!stream) {
+			app.ports.streamError.send("No stream running");
+			return
+		}
+
+		stream.cancel();
+	});
+
 	app.ports.streamContinue.subscribe(function() {
 		if (!stream) {
 			app.ports.streamError.send("Stream already in progress");

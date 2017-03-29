@@ -61,6 +61,13 @@ form#query button {
 	transition: all 0.15s ease;
 }
 
+form#query button:disabled {
+	border-color: rgb(127, 140, 141);
+	color: rgb(127, 140, 141);
+	cursor: none;
+	pointer-events: none;
+}
+
 form#query button:focus {
 	outline: 0;
 }

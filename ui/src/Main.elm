@@ -24,7 +24,7 @@ import Html
         , text
         , tr
         )
-import Html.Attributes exposing (autofocus, class, for, id, placeholder, type_, value)
+import Html.Attributes exposing (autofocus, class, disabled, for, id, placeholder, type_, value)
 import Html.Events exposing (on, onClick, onInput, onSubmit, targetValue)
 import Http exposing (Request, Response, emptyBody, expectStringResponse, request, send)
 import Json.Decode as Json
@@ -53,6 +53,7 @@ type alias Model =
     , query : Query
     , records : List Record
     , stats : Maybe Stats
+    , streamRunning : Bool
     }
 
 
@@ -80,7 +81,7 @@ type alias Stats =
 
 init : ( Model, Cmd Msg )
 init =
-    ( Model 0 0 initQuery [] Nothing, Task.perform Tick Time.now )
+    ( Model 0 0 initQuery [] Nothing False, Task.perform Tick Time.now )
 
 
 initQuery : Query
@@ -104,6 +105,7 @@ type Msg
     | QueryToUpdate String
     | QueryWindowUpdate String
     | StatsUpdate (Result Http.Error Stats)
+    | StreamCancel
     | StreamComplete String
     | StreamError String
     | StreamLines (List String)
@@ -114,7 +116,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         QueryFormSubmit ->
-            ( { model | records = [] }, getRecords model.now model.query )
+            ( { model | records = [], streamRunning = True }, getRecords model.now model.query )
 
         QueryRegexUpdate val ->
             let
@@ -157,11 +159,14 @@ update msg model =
         StatsUpdate (Err _) ->
             ( model, Cmd.none )
 
+        StreamCancel ->
+            ( { model | streamRunning = False }, streamCancel "" )
+
         StreamComplete _ ->
-            ( model, Cmd.none )
+            ( { model | streamRunning = False }, Cmd.none )
 
         StreamError _ ->
-            ( model, Cmd.none )
+            ( { model | streamRunning = False }, Cmd.none )
 
         StreamLines lines ->
             let
@@ -209,6 +214,7 @@ subscriptions model =
 
 -- PORTS
 
+port streamCancel : String -> Cmd msg
 port streamContinue : String -> Cmd msg
 port streamRequest : String -> Cmd msg
 
@@ -452,11 +458,20 @@ viewResultInfo numRecords =
 formQuery : Model -> Html Msg
 formQuery model =
     let
-        action =
-            if model.query.to == "streaming" then
-                button [] [ text "stream" ]
+        attrs =
+            if String.length model.query.term == 0 then
+                [ disabled True ]
             else
-                button [] [ text "query" ]
+                []
+
+        action =
+            if model.streamRunning then
+                button [ onClick StreamCancel ] [ text "cancel" ]
+            else
+                if model.query.to == "streaming" then
+                    button attrs [ text "stream" ]
+                else
+                    button attrs [ text "query" ]
 
     in
         form [ id "query", onSubmit QueryFormSubmit ]
@@ -527,11 +542,11 @@ formElementQuery query =
 formElementWindow : Html Msg
 formElementWindow =
     select [ on "change" (Json.map QueryWindowUpdate targetValue) ]
-        [ option [ value "5m" ] [ text "5 m" ]
-        , option [ value "15m" ] [ text "15 m" ]
-        , option [ value "1h" ] [ text "1 hr" ]
+        [ option [ value "5m" ] [ text "5 min" ]
+        , option [ value "15m" ] [ text "15 min" ]
+        , option [ value "1h" ] [ text "1 hrs" ]
         , option [ value "12h" ] [ text "12 hrs" ]
-        , option [ value "1d" ] [ text "1 day" ]
+        , option [ value "1d" ] [ text "1 days" ]
         , option [ value "3d" ] [ text "3 days" ]
         , option [ value "7d" ] [ text "7 days" ]
         ]
