@@ -55,10 +55,14 @@ form#query button {
 	border: 0.1rem solid rgb(44, 62, 80);
 	cursor: pointer;
 	font-weight: 700;
-	margin-left: 2.4rem;
-	padding: 0.6rem 1rem;
+	margin: -0.1rem;
+	padding: 0 1.7rem;
 	text-transform: capitalize;
 	transition: all 0.15s ease;
+}
+
+form#query button:focus {
+	outline: 0;
 }
 
 form#query button:hover {
@@ -81,6 +85,10 @@ form#query div.row {
 	flex-wrap: nowrap;
 }
 
+form#query div.row.actions {
+	align-items: stretch;
+}
+
 form#query div.row:last-child {
 	justify-content: space-between;
 }
@@ -94,10 +102,17 @@ form#query div.term {
 	flex: 1 1 auto;
 }
 
+form#query div.as,
 form#query div.range {
 	align-items: center;
 	display: flex;
-	padding: 1.2rem 1.6rem 1rem 1.6rem;
+	padding: 1.2rem 0rem 1rem 1.6rem;
+}
+
+form#query div.as span,
+form#query div.range span {
+	font-style: italic;
+	font-weight: 300;
 }
 
 form#query div.result-info {

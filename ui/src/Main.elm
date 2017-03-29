@@ -100,8 +100,8 @@ initStats =
 
 type Msg
     = QueryFormSubmit
+    | QueryRegexUpdate String
     | QueryTermUpdate String
-    | QueryToggleRegex
     | QueryToUpdate String
     | QueryWindowUpdate String
     | StatsUpdate (Result Http.Error Stats)
@@ -117,19 +117,26 @@ update msg model =
         QueryFormSubmit ->
             ( { model | records = [] }, getRecords model.now model.query )
 
+        QueryRegexUpdate val ->
+            let
+                regex =
+                    if val == "regex" then
+                        True
+                    else
+                        False
+
+                query =
+                    model.query
+
+            in
+                ( { model | query = { query | regex = regex } }, Cmd.none )
+
         QueryTermUpdate term ->
             let
                 query =
                     model.query
             in
                 ( { model | isPlanned = False, query = { query | term = term } }, Cmd.none )
-
-        QueryToggleRegex ->
-            let
-                query =
-                    model.query
-            in
-                ( { model | query = { query | regex = not query.regex } }, Cmd.none )
 
         QueryToUpdate to ->
             let
@@ -457,13 +464,10 @@ formQuery model =
             [ div [ class "row" ]
                 [ formElementQuery model.query.term
                 ]
-            , div [ class "row" ]
-                [ formElementRange model.query
-                , div [ class "regex" ]
-                    [ input [ id "regex", onClick QueryToggleRegex, type_ "checkbox" ] []
-                    , label [ for "regex" ] [ text "regex" ]
-                    ]
-                , action
+            , div [ class "actions row" ]
+                [ action
+                , formElementRange model.query
+                , formElementAs
                 ]
             , div [ class "row" ]
                 [ viewPlan model.isPlanned model.stats
@@ -471,6 +475,16 @@ formQuery model =
                 ]
             ]
 
+
+formElementAs : Html Msg
+formElementAs =
+    div [ class "as" ]
+        [ span [] [ text "as" ]
+        , select [ on "change" (Json.map QueryRegexUpdate targetValue) ]
+            [ option [ value "plain" ] [ text "plain text" ]
+            , option [ value "regex" ] [ text "regex" ]
+            ]
+        ]
 
 formElementRange : Query -> Html Msg
 formElementRange query =
@@ -483,24 +497,12 @@ formElementRange query =
 
     in
         div [ class "range" ]
-            [ text "from"
+            [ span [] [ text "from" ]
             , formElementWindow
             , bridge
             , formElementTo
             ]
 
-
-formElementWindow : Html Msg
-formElementWindow =
-    select [ on "change" (Json.map QueryWindowUpdate targetValue) ]
-        [ option [ value "5m" ] [ text "5m" ]
-        , option [ value "15m" ] [ text "15m" ]
-        , option [ value "1h" ] [ text "1hr" ]
-        , option [ value "12h" ] [ text "12hrs" ]
-        , option [ value "1d" ] [ text "1day" ]
-        , option [ value "3d" ] [ text "3days" ]
-        , option [ value "7d" ] [ text "7days" ]
-        ]
 
 
 formElementTo : Html Msg
@@ -521,6 +523,18 @@ formElementQuery query =
             , value query
             ]
             []
+        ]
+
+formElementWindow : Html Msg
+formElementWindow =
+    select [ on "change" (Json.map QueryWindowUpdate targetValue) ]
+        [ option [ value "5m" ] [ text "5m" ]
+        , option [ value "15m" ] [ text "15m" ]
+        , option [ value "1h" ] [ text "1hr" ]
+        , option [ value "12h" ] [ text "12hrs" ]
+        , option [ value "1d" ] [ text "1day" ]
+        , option [ value "3d" ] [ text "3days" ]
+        , option [ value "7d" ] [ text "7days" ]
         ]
 
 
