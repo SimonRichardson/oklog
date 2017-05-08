@@ -42,3 +42,7 @@
 [[dependencies]]
   name = "github.com/prometheus/prometheus"
   version = "^1.4.1"
+
+[[dependencies]]
+  branch = "master"
+  name = "github.com/hashicorp/serf"

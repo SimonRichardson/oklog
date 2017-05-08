@@ -7,25 +7,21 @@
 package cluster
 
 import (
-	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/hashicorp/memberlist"
+	"github.com/hashicorp/serf/serf"
 	"github.com/pborman/uuid"
 )
 
 // Peer represents this node in the cluster.
 type Peer struct {
-	ml *memberlist.Memberlist
-	d  *delegate
+	ml *serf.Serf
 }
 
 // PeerType enumerates the types of nodes in the cluster.
@@ -58,37 +54,40 @@ func NewPeer(
 ) (*Peer, error) {
 	level.Debug(logger).Log("bind_addr", bindAddr, "bind_port", bindPort, "ParseIP", net.ParseIP(bindAddr).String())
 
-	d := newDelegate(logger)
-	config := memberlist.DefaultLANConfig()
+	config := serf.DefaultConfig()
 	{
-		config.Name = uuid.New()
-		config.BindAddr = bindAddr
-		config.BindPort = bindPort
+		config.NodeName = uuid.New()
+		config.MemberlistConfig.BindAddr = bindAddr
+		config.MemberlistConfig.BindPort = bindPort
 		if advertiseAddr != "" {
 			level.Debug(logger).Log("advertise_addr", advertiseAddr, "advertise_port", advertisePort)
-			config.AdvertiseAddr = advertiseAddr
-			config.AdvertisePort = advertisePort
+
+			config.MemberlistConfig.AdvertiseAddr = advertiseAddr
+			config.MemberlistConfig.AdvertisePort = advertisePort
 		}
 		config.LogOutput = ioutil.Discard
-		config.Delegate = d
-		config.Events = d
+		config.BroadcastTimeout = time.Second * 10
+		config.Tags = encodePeerInfoTag(peerInfo{
+			Type:    t,
+			APIAddr: bindAddr,
+			APIPort: bindPort,
+		})
 	}
-	ml, err := memberlist.Create(config)
+
+	ml, err := serf.Create(config)
 	if err != nil {
 		return nil, err
 	}
 
-	d.init(config.Name, t, ml.LocalNode().Addr.String(), apiPort, ml.NumMembers)
-	n, _ := ml.Join(existing)
+	n, _ := ml.Join(existing, true)
 	level.Debug(logger).Log("Join", n)
 
 	if len(existing) > 0 {
-		go warnIfAlone(ml, logger, 5*time.Second)
+		go warnIfAlone(ml.Memberlist(), logger, 5*time.Second)
 	}
 
 	return &Peer{
 		ml: ml,
-		d:  d,
 	}, nil
 }
 
@@ -102,202 +101,88 @@ func warnIfAlone(ml *memberlist.Memberlist, logger log.Logger, d time.Duration) 
 
 // Leave the cluster, waiting up to timeout.
 func (p *Peer) Leave(timeout time.Duration) error {
-	return p.ml.Leave(timeout)
+	// Ignore this timeout for now, serf uses a config timeout.
+	return p.ml.Leave()
 }
 
 // Current API host:ports for the given type of node.
-func (p *Peer) Current(t PeerType) []string {
-	return p.d.current(t)
+func (p *Peer) Current(t PeerType) (res []string) {
+	for _, v := range p.ml.Members() {
+		if v.Status != serf.StatusAlive {
+			continue
+		}
+
+		if info, ok := decodePeerInfoTag(v.Tags); ok {
+			var (
+				matchIngest      = t == PeerTypeIngest && (info.Type == PeerTypeIngest || info.Type == PeerTypeIngestStore)
+				matchStore       = t == PeerTypeStore && (info.Type == PeerTypeStore || info.Type == PeerTypeIngestStore)
+				matchIngestStore = t == PeerTypeIngestStore && info.Type == PeerTypeIngestStore
+			)
+			if matchIngest || matchStore || matchIngestStore {
+				res = append(res, net.JoinHostPort(info.APIAddr, strconv.Itoa(info.APIPort)))
+			}
+		}
+
+	}
+	return
 }
 
-// Name returns the unique ID of this peer in the cluster.
+// Name returns unique ID of this peer in the cluster.
 func (p *Peer) Name() string {
-	return p.ml.LocalNode().Name
+	return p.ml.Memberlist().LocalNode().Name
 }
 
 // ClusterSize returns the total size of the cluster from this node's perspective.
 func (p *Peer) ClusterSize() int {
-	return p.ml.NumMembers()
+	return p.ml.Memberlist().NumMembers()
 }
 
 // State returns a JSON-serializable dump of cluster state.
 // Useful for debug.
 func (p *Peer) State() map[string]interface{} {
 	return map[string]interface{}{
-		"self":     p.ml.LocalNode(),
-		"members":  p.ml.Members(),
-		"n":        p.ml.NumMembers(),
-		"delegate": p.d.state(),
+		"self":    p.ml.Memberlist().LocalNode(),
+		"members": p.ml.Memberlist().Members(),
+		"n":       p.ml.Memberlist().NumMembers(),
 	}
-}
-
-// delegate manages gossiped data: the set of peers, their type, and API port.
-// Clients must invoke init before the delegate can be used.
-// Inspired by https://github.com/asim/memberlist/blob/master/memberlist.go
-type delegate struct {
-	mtx    sync.RWMutex
-	bcast  *memberlist.TransmitLimitedQueue
-	data   map[string]peerInfo
-	logger log.Logger
 }
 
 type peerInfo struct {
-	Type    PeerType `json:"type"`
-	APIAddr string   `json:"api_addr"`
-	APIPort int      `json:"api_port"`
+	Type    PeerType
+	APIAddr string
+	APIPort int
 }
 
-func newDelegate(logger log.Logger) *delegate {
-	return &delegate{
-		bcast:  nil,
-		data:   map[string]peerInfo{},
-		logger: logger,
+// encodeTagPeerInfo encodes the peer information for the node tags.
+func encodePeerInfoTag(info peerInfo) map[string]string {
+	return map[string]string{
+		"type":     string(info.Type),
+		"api_addr": info.APIAddr,
+		"api_port": strconv.Itoa(info.APIPort),
 	}
 }
 
-func (d *delegate) init(myName string, myType PeerType, apiAddr string, apiPort int, numNodes func() int) {
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	// As far as I can tell, it is only luck which ensures the d.bcast isn't
-	// used (via GetBroadcasts) before we have a chance to create it here. But I
-	// don't see a way to wire up the components (in NewPeer) that doesn't
-	// involve this roundabout sort of initialization. Shrug!
-	d.bcast = &memberlist.TransmitLimitedQueue{
-		NumNodes:       numNodes,
-		RetransmitMult: 3,
+// decodePeerInfoTag gets the peer information from the node tags.
+func decodePeerInfoTag(m map[string]string) (info peerInfo, valid bool) {
+	if peerType, ok := m["type"]; ok {
+		info.Type = PeerType(peerType)
+	} else {
+		return
 	}
-	d.data[myName] = peerInfo{myType, apiAddr, apiPort}
-}
 
-func (d *delegate) current(t PeerType) (res []string) {
-	for _, info := range d.state() {
-		var (
-			matchIngest      = t == PeerTypeIngest && (info.Type == PeerTypeIngest || info.Type == PeerTypeIngestStore)
-			matchStore       = t == PeerTypeStore && (info.Type == PeerTypeStore || info.Type == PeerTypeIngestStore)
-			matchIngestStore = t == PeerTypeIngestStore && info.Type == PeerTypeIngestStore
-		)
-		if matchIngest || matchStore || matchIngestStore {
-			res = append(res, net.JoinHostPort(info.APIAddr, strconv.Itoa(info.APIPort)))
+	if apiPort, ok := m["api_port"]; ok {
+		var err error
+		info.APIPort, err = strconv.Atoi(apiPort)
+		if err != nil {
+			return
 		}
-	}
-	return res
-}
-
-func (d *delegate) state() map[string]peerInfo {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-	res := map[string]peerInfo{}
-	for k, v := range d.data {
-		res[k] = v
-	}
-	return res
-}
-
-// NodeMeta is used to retrieve meta-data about the current node
-// when broadcasting an alive message. It's length is limited to
-// the given byte size. This metadata is available in the Node structure.
-// Implements memberlist.Delegate.
-func (d *delegate) NodeMeta(limit int) []byte {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-	return []byte{} // no metadata
-}
-
-// NotifyMsg is called when a user-data message is received.
-// Care should be taken that this method does not block, since doing
-// so would block the entire UDP packet receive loop. Additionally, the byte
-// slice may be modified after the call returns, so it should be copied if needed.
-// Implements memberlist.Delegate.
-func (d *delegate) NotifyMsg(b []byte) {
-	if len(b) == 0 {
+	} else {
 		return
 	}
-	var data map[string]peerInfo
-	if err := json.Unmarshal(b, &data); err != nil {
-		level.Error(d.logger).Log("method", "NotifyMsg", "b", strings.TrimSpace(string(b)), "err", err)
+
+	if info.APIAddr, valid = m["api_addr"]; !valid {
 		return
 	}
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	for k, v := range data {
-		// Removing data is handled by NotifyLeave
-		d.data[k] = v
-	}
-}
 
-// GetBroadcasts is called when user data messages can be broadcast.
-// It can return a list of buffers to send. Each buffer should assume an
-// overhead as provided with a limit on the total byte size allowed.
-// The total byte size of the resulting data to send must not exceed
-// the limit. Care should be taken that this method does not block,
-// since doing so would block the entire UDP packet receive loop.
-// Implements memberlist.Delegate.
-func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-	if d.bcast == nil {
-		panic("GetBroadcast before init")
-	}
-	return d.bcast.GetBroadcasts(overhead, limit)
-}
-
-// LocalState is used for a TCP Push/Pull. This is sent to
-// the remote side in addition to the membership information. Any
-// data can be sent here. See MergeRemoteState as well. The `join`
-// boolean indicates this is for a join instead of a push/pull.
-// Implements memberlist.Delegate.
-func (d *delegate) LocalState(join bool) []byte {
-	d.mtx.RLock()
-	defer d.mtx.RUnlock()
-	buf, err := json.Marshal(d.data)
-	if err != nil {
-		panic(err)
-	}
-	return buf
-}
-
-// MergeRemoteState is invoked after a TCP Push/Pull. This is the
-// state received from the remote side and is the result of the
-// remote side's LocalState call. The 'join'
-// boolean indicates this is for a join instead of a push/pull.
-// Implements memberlist.Delegate.
-func (d *delegate) MergeRemoteState(buf []byte, join bool) {
-	if len(buf) == 0 {
-		level.Debug(d.logger).Log("method", "MergeRemoteState", "join", join, "buf_sz", 0)
-		return
-	}
-	var data map[string]peerInfo
-	if err := json.Unmarshal(buf, &data); err != nil {
-		level.Error(d.logger).Log("method", "MergeRemoteState", "err", err)
-		return
-	}
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	for k, v := range data {
-		d.data[k] = v
-	}
-}
-
-// NotifyJoin is invoked when a node is detected to have joined.
-// The Node argument must not be modified.
-// Implements memberlist.EventDelegate.
-func (d *delegate) NotifyJoin(n *memberlist.Node) {
-	level.Debug(d.logger).Log("received", "NotifyJoin", "node", n.Name, "addr", fmt.Sprintf("%s:%d", n.Addr, n.Port))
-}
-
-// NotifyUpdate is invoked when a node is detected to have updated, usually
-// involving the meta data. The Node argument must not be modified.
-// Implements memberlist.EventDelegate.
-func (d *delegate) NotifyUpdate(n *memberlist.Node) {
-	level.Debug(d.logger).Log("received", "NotifyUpdate", "node", n.Name, "addr", fmt.Sprintf("%s:%d", n.Addr, n.Port))
-}
-
-// NotifyLeave is invoked when a node is detected to have left.
-// The Node argument must not be modified.
-// Implements memberlist.EventDelegate.
-func (d *delegate) NotifyLeave(n *memberlist.Node) {
-	level.Debug(d.logger).Log("received", "NotifyLeave", "node", n.Name, "addr", fmt.Sprintf("%s:%d", n.Addr, n.Port))
-	d.mtx.Lock()
-	defer d.mtx.Unlock()
-	delete(d.data, n.Name)
+	return
 }
